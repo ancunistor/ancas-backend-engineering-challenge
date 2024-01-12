@@ -14,41 +14,32 @@ from collections import deque
 def is_non_zero_file(fpath):  
     return os.path.isfile(fpath) and os.path.getsize(fpath) > 0
 
-def print_average(running_time : datetime, translation_running_list : deque, average_data : dict):
+
+#prints a minute-by-minute view of the last (maximum) "window_size" minutes of translations delivered
+#translation_running_list - list with one entry per minute of: {"sum" : translation_delivered_duration_sum, "items" : number_of_translation_delivered_items}
+#average_data - {"sum" : total_translation_delivered_duration_sum, "items" : total_number_of_translation_delivered_items}
+#window_size - number of minutes to average delivered translations
+#running_time - current minute
+def print_average(translation_running_list : deque, average_data : dict, window_size : int, running_time : datetime):
     if (not translation_running_list):
         #the queue is empty, print average = 0
         print("{\"date\": \"" + running_time.strftime("%Y-%m-%d %H:%M:%S.%f") + "\", \"average_delivery_time\": 0}")
     else:
-        #calculate the oldest time for the translations to be added to the average
-        oldest_date = running_time - timedelta(minutes=average_data["window"])
+        if (len(translation_running_list) > window_size):
+            removed_item = translation_running_list.popleft()
+            average_data["sum"] = average_data["sum"] - removed_item["sum"]
+            average_data["items"] = average_data["items"] - removed_item["items"]
 
-        
-        oldest_translation_item = translation_running_list[0]
-        oldest_timestamp = datetime.strptime(oldest_translation_item["timestamp"], '%Y-%m-%d %H:%M:%S.%f')
-        oldest_duration = int(oldest_translation_item["duration"])
-
-        #remove all too old translations from the list
-        #subtract the duration value from the sum
-        #update number of items to calculate the average for
-        while (oldest_timestamp < oldest_date):
-            translation_running_list.popleft()
-            average_data["sum"] = average_data["sum"] - oldest_duration
-            average_data["items"] = average_data["items"] - 1
-            if (not translation_running_list):
-                #list is empty
-                break
-            oldest_translation_item = translation_running_list[0]
-            oldest_timestamp = datetime.strptime(oldest_translation_item["timestamp"], '%Y-%m-%d %H:%M:%S.%f')
-            oldest_duration = int(oldest_translation_item["duration"])
-
-        if (translation_running_list):
-            #the list has items, calculate and display the average
-            average_delivery_time = average_data["sum"] / average_data["items"]
-            print("{\"date\": \"" + running_time.strftime("%Y-%m-%d %H:%M:%S.%f") + "\", \"average_delivery_time\": " + str(average_delivery_time) + "}")
+        if (average_data["sum"] == 0):
+            average = 0
         else:
-            #the list is empty, print average = 0
-            print("{\"date\": \"" + running_time.strftime("%Y-%m-%d %H:%M:%S.%f") + "\", \"average_delivery_time\": 0}")
-            
+            average = average_data["sum"] / average_data["items"]
+            if (average == int(average)):
+                average = int(average)
+        print("{\"date\": \"" + running_time.strftime("%Y-%m-%d %H:%M:%S.%f") + "\", \"average_delivery_time\": " + str(average) +"}")
+
+#uncomment line 54 to use the project test file
+#call to test given sample: python3 average_delivery_time_calculator.py --input_file events.json --window_size 10
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Script that accepts an input file name and a window size parameter"
@@ -82,28 +73,29 @@ if __name__ == "__main__":
     translation_delivered_timestamp = datetime.strptime(translation_delivered["timestamp"], '%Y-%m-%d %H:%M:%S.%f')
     running_time = translation_delivered_timestamp.replace(second=0, microsecond=0)
 
-    #initialize linked list which contains last --window-size number minutes' translation delivered items
+    #linked list which contains last --window-size number minutes' worth of translation delivered items
     translation_running_list = collections.deque()
 
-    #initialize data for calculating the average
-    average_data = {'sum' : 0, 'items' : 0, 'window' : window_size}
+    #int for calculating the sum of all the translation durations received per minute
+    sum_per_minute = 0
 
+    #int for calculating the number of translation durations received per minute
+    number_per_minute = 0
+
+    #data for average calculation
+    average_data = {"sum": 0, "items": 0}
+
+    #process first translation_delivered
     if (translation_delivered_timestamp == running_time):
-        #add translation delivered item to list and print it
-        #add duration to sum and increase number of items, for average calculation
+        average_data["sum"] += int(translation_delivered["duration"])
+        average_data["items"] += 1
+        translation_running_list.append({"sum" : average_data["sum"], "items" : average_data["items"]})
+        print_average(translation_running_list, average_data, window_size, running_time)
 
-        translation_running_list.append(translation_delivered)
-        average_data["sum"] = int(translation_delivered["duration"])
-        average_data["items"] = 1
-        print_average(running_time, translation_running_list, average_data)
     else :
-        #print with 0 average and add translation delivered item to list
-        #add duration to sum and increase number of items, for average calculation
-
-        print_average(running_time, translation_running_list, average_data)
-        translation_running_list.append(translation_delivered)
-        average_data["sum"] = int(translation_delivered["duration"])
-        average_data["items"] = 1
+        print_average(translation_running_list, average_data, window_size, running_time)
+        sum_per_minute += int(translation_delivered["duration"])
+        number_per_minute = 1
 
     #increase the running time by one minute
     running_time = running_time + timedelta(minutes=1)
@@ -119,14 +111,58 @@ if __name__ == "__main__":
 
         translation_delivered_timestamp = datetime.strptime(translation_delivered["timestamp"], '%Y-%m-%d %H:%M:%S.%f')
 
-        while (translation_delivered_timestamp >= running_time):
-            print_average(running_time, translation_running_list, average_data)
+        if (translation_delivered_timestamp == running_time):
+            #minute interval complete
+
+            sum_per_minute += int(translation_delivered["duration"])
+            number_per_minute += 1
+
+            #add minute interval calculation to list
+            translation_running_list.append({"sum" : sum_per_minute, "items" : number_per_minute})
+
+            #print minute average and increase running time
+            print_average(translation_running_list, average_data, window_size, running_time)
             running_time = running_time + timedelta(minutes=1)
 
-        translation_running_list.append(translation_delivered)
-        average_data["sum"] = average_data["sum"] + int(translation_delivered["duration"])
-        average_data["items"] = average_data["items"] + 1
+
+            average_data["items"] += number_per_minute
+            average_data["sum"] += sum_per_minute
+
+            number_per_minute = 0
+            sum_per_minute = 0
+        else: 
+            if (translation_delivered_timestamp > running_time):
+                #no translation_delivered events for a while
+                #save calculated minute data and prepare for empty entries until translation_delivered_timestamp is reached
+                translation_running_list.append({"sum" : sum_per_minute, "items" : number_per_minute})
+                average_data["items"] += number_per_minute
+                average_data["sum"] += sum_per_minute
+                number_per_minute = 0
+                sum_per_minute = 0
+                running_time = running_time + timedelta(minutes=1)
+
+                print_average(translation_running_list, average_data, window_size, running_time)
+
+                while (translation_delivered_timestamp > running_time):
+                    #add empty entries to list for catching up minutes
+                    translation_running_list.append({"sum" : 0, "items" : 0})
+                    print_average(translation_running_list, average_data, window_size, running_time)
+                    running_time = running_time + timedelta(minutes=1)
+                
+                #caught up
+                #adding bigger timestamp to running minute data
+                sum_per_minute += int(translation_delivered["duration"])
+                number_per_minute += 1
+            else:
+                #translation_delivered_timestamp < running_time
+                #add duration and items to the minute calculations
+                sum_per_minute += int(translation_delivered["duration"])
+                number_per_minute += 1
 
     input_file.close()
 
-    print_average(running_time, translation_running_list, average_data)
+    #add rest
+    translation_running_list.append({"sum" : sum_per_minute, "items" : number_per_minute})
+    average_data["items"] += number_per_minute
+    average_data["sum"] += sum_per_minute
+    print_average(translation_running_list, average_data, window_size, running_time)
